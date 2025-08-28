@@ -1,0 +1,9 @@
+{
+  "Name": "secure-layer-check",
+  "Description": "Blocks containers if layer hashes don't match policy",
+  "Interface": {
+    "Types": ["authorization"]
+  },
+  "Entrypoint": ["/run.sh"]
+}
+
