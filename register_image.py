@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
+"""
+register_image.py
+
+Registers a local Docker image by computing SHA256 hashes of all layers and
+storing them in a per-user policy at ~/.secure-docker-plugin/policy.json.
+
+This now records entries addressable by both the image's tag and its digest,
+so enforcement can prefer digest-based checks while remaining backward-compatible.
+"""
 import subprocess
 import json
 import sys
 import os
 import hashlib
 import shutil
+import docker
 
 # Local policy storage (per user)
 POLICY_DIR = os.path.expanduser("~/.secure-docker-plugin")
@@ -16,13 +26,13 @@ os.makedirs(POLICY_DIR, exist_ok=True)
 def load_policy():
     """Load existing policy.json or return empty dict."""
     if os.path.exists(POLICY_FILE):
-        with open(POLICY_FILE, "r") as f:
+        with open(POLICY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
 def save_policy(policy):
     """Save policy.json to local folder."""
-    with open(POLICY_FILE, "w") as f:
+    with open(POLICY_FILE, "w", encoding="utf-8") as f:
         json.dump(policy, f, indent=2)
     print(f"[INFO] Policy updated: {POLICY_FILE}")
 
@@ -80,14 +90,30 @@ def get_layer_hashes_from_tar(image_name):
 
     return layer_hashes
 
+def get_image_digest(image_name: str) -> str:
+    """Get the image content digest (repo digest if available, else image ID)."""
+    client = docker.from_env()
+    image = client.images.get(image_name)
+    repo_digests = image.attrs.get("RepoDigests") or []
+    if repo_digests:
+        try:
+            return repo_digests[0].split("@", 1)[1]
+        except Exception:
+            pass
+    return image.id  # e.g., 'sha256:...'
+
 def register_image(image_name):
     """Register the image in the local policy.json."""
     check_image_exists(image_name)
     hashes = get_layer_hashes_from_tar(image_name)
+    digest = get_image_digest(image_name)
     policy = load_policy()
-    policy[image_name] = {"layers": hashes}
+    entry = {"layers": hashes, "digest": digest}
+    # Store under both keys for compatibility and digest-based enforcement
+    policy[image_name] = entry
+    policy[digest] = {"layers": hashes, "image": image_name, "digest": digest}
     save_policy(policy)
-    print(f"[INFO] Image '{image_name}' successfully registered.")
+    print(f"[INFO] Image '{image_name}' successfully registered with digest {digest}.")
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
